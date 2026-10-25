@@ -1,0 +1,115 @@
+# iCloud Photo Sync
+
+A small, menu-driven tool to sync your iCloud Photos library to a local folder,
+using the third-party downloader [`icloudpd`](https://github.com/boredazfcuk/icloud_photos_downloader).
+
+Supports **multiple Apple IDs** (each into its own subfolder), a **configurable
+backup location**, and **scheduled sync** (Windows Task Scheduler, or `cron`
+on Linux/macOS).
+
+> Note: the interactive menu is in Chinese. The tool itself works on any OS
+> where `icloudpd` runs.
+
+## Features
+
+- Sync iPhone / iCloud Photos to local disk, organized by `year/month`.
+- Multiple accounts, each in its own subfolder under the backup root.
+- Configurable backup root and `icloudpd` location via `config.ini`.
+- Two non-interactive modes for schedulers:
+  - `python sync_all.py --sync` — incremental sync (stops after 50 already-downloaded photos).
+  - `python sync_all.py --full` — full download (optionally `--accounts a,b,c`).
+- Passwords are **never stored**: you type the password + 2FA code once at login;
+  `icloudpd` saves a session cookie, so later syncs need no password.
+
+## Why not the official iCloud for Windows client?
+
+The official client authenticates through `gsa.apple.com`, which may be blocked
+in some networks (TLS handshake drops while other Apple domains work fine).
+`icloudpd` uses a different web API auth path and works where the official client
+does not. This tool simply wraps `icloudpd`.
+
+## Requirements
+
+- Python 3.7+
+- [`icloudpd`](https://github.com/boredazfcuk/icloud_photos_downloader) installed
+  and available on `PATH` (or set its full path in `config.ini`).
+- An Apple ID with iCloud Photos enabled, and the ability to complete 2FA
+  (password + phone/device verification code) at login time.
+
+## Setup
+
+1. Install `icloudpd` (see its docs). Verify with `icloudpd --help`.
+2. Clone this repo and enter it:
+   ```bash
+   git clone https://github.com/OWL-JC/icloud-photo-sync.git
+   cd icloud-photo-sync
+   ```
+3. (Optional) Copy the example config and adjust:
+   ```bash
+   cp config.ini.example config.ini
+   ```
+   On first run `sync_all.py` also creates a default `config.ini` automatically.
+
+## Usage
+
+Run the interactive menu:
+
+```bash
+python sync_all.py
+```
+
+```
+1. 登录 / 添加账号        # enter Apple ID, then password + 2FA code when prompted
+2. 管理账号（查看 / 删除）
+3. 设置备份地址          # change where photos are stored
+4. 全量下载（可选时间）  # full download now, or schedule a start time
+5. 立即同步一次（增量）  # one incremental sync
+6. 设置每日自动同步      # create a daily scheduled task at a chosen time
+7. 查看 / 取消定时任务
+8. 退出
+```
+
+## Background (scheduled) modes
+
+These are what the scheduled task runs — no human input needed:
+
+```bash
+python sync_all.py --sync          # incremental sync of all accounts
+python sync_all.py --full          # full download of all accounts
+python sync_all.py --full --accounts you@example.com   # only this account
+```
+
+## Configuration (`config.ini`)
+
+| Key           | Meaning |
+|---------------|---------|
+| `backup_root` | Root folder for photos; each account gets its own subfolder. |
+| `cookie_dir`  | Where `icloudpd` stores login session cookies. Do not edit manually. |
+| `tool`        | Path to `icloudpd` (or just `icloudpd` if on `PATH`). |
+| `domain`      | iCloud region. **Mainland China → `cn`**; elsewhere leave empty. |
+| `[account_x]` | One section per account: `apple_id` and `folder` (subfolder name; empty = backup root). |
+
+## Scheduling
+
+- **Windows**: use menu option `6` to create a daily Task Scheduler entry at a
+  time you choose (or option `4` to schedule a one-time full download).
+- **Linux / macOS**: use `cron`. Example — incremental sync every day at 09:30:
+  ```cron
+  30 9 * * * /usr/bin/python3 /path/to/icloud-photo-sync/sync_all.py --sync
+  ```
+
+## Caveats
+
+- **Exit code is not reliable**: `icloudpd` may return `0` even on bad arguments.
+  This tool judges success by whether the file count actually grew.
+- **Credentials expire** (usually weeks to months). When sync reports "no new
+  files", re-run menu option `1` to log in again.
+- **`--folder-structure` must be a single brace block**: `"{:%Y/%m}"`, not
+  `"{:%Y}/{:%m}"`.
+- **`--auto-delete` (mirror phone deletions to disk) is NOT implemented yet** —
+  planned for a later version. Photos already on disk are never deleted by this tool.
+- Login takes 1–3 minutes with no output; that is normal, do not close the window.
+
+## License
+
+[MIT](LICENSE)
