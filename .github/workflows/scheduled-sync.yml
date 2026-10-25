@@ -1,0 +1,57 @@
+# ============================================================================
+# Scheduled iCloud photo sync - EXAMPLE for a SELF-HOSTED runner
+#
+# Why self-hosted? The sync must run on a machine that
+#   * can reach Apple's servers, and
+#   * already holds your icloudpd login cookies.
+# config.ini is gitignored on purpose, and credentials (passwords, 2FA codes,
+# cookie directories) must NEVER be committed or stored in plaintext.
+# GitHub-hosted runners cannot access your photos or cookies, so this workflow
+# is MANUAL-ONLY by default (workflow_dispatch).
+#
+# To enable the daily schedule:
+#   1. Set up a self-hosted runner on the machine that stores your photos
+#      (https://docs.github.com/en/actions/hosting-your-own-runners).
+#   2. On that machine, copy config.ini.example to config.ini, set backup_root
+#      and cookie_dir, and make sure icloudpd is installed and working.
+#   3. Uncomment the `schedule:` block below and commit.
+#      Note: GitHub cron times are UTC.
+# ============================================================================
+
+name: Scheduled Sync (self-hosted)
+
+on:
+  workflow_dispatch: {}
+  # schedule:
+  #   - cron: "30 9 * * *"   # every day 09:30 UTC; adjust to your timezone
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install icloudpd
+        run: pip install --upgrade icloudpd
+
+      # Incremental sync of all accounts (stops after 50 already-downloaded
+      # photos per account). Use `--full` for a full download instead.
+      - name: Incremental sync
+        run: python sync_all.py --sync
+
+      # If the sync fails, upload the log for inspection.
+      # logs/sync.log is gitignored but generated at runtime on the runner.
+      - name: Upload log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sync-log
+          path: logs/sync.log
