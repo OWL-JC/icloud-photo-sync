@@ -1,5 +1,7 @@
 # iCloud Photo Sync
 
+**English** | [简体中文](README.zh-CN.md)
+
 A small, menu-driven tool to sync your iCloud Photos library to a local folder,
 using the third-party downloader [`icloudpd`](https://github.com/boredazfcuk/icloud_photos_downloader).
 
@@ -97,6 +99,18 @@ python sync_all.py --full --accounts you@example.com   # only this account
   ```cron
   30 9 * * * /usr/bin/python3 /path/to/icloud-photo-sync/sync_all.py --sync
   ```
+
+## Continuous Integration / GitHub Actions
+
+Two example workflows ship in `.github/workflows/`:
+
+- `ci.yml` — on every push / pull request: compile check plus smoke tests
+  (menu exits cleanly, headless modes handle "no accounts" gracefully) across a
+  Python 3.8 / 3.10 / 3.12 × Ubuntu / Windows matrix.
+- `scheduled-sync.yml` — an example daily sync for a **self-hosted runner**
+  (manual-only by default). GitHub-hosted runners cannot reach your photos or
+  credentials, so enable it only on a runner you control; see the comments in
+  the file for setup steps.
 
 ## Caveats
 
