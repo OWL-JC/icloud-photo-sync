@@ -1,0 +1,18 @@
+# iCloud 照片同步 配置样例
+# 用法：复制本文件为 config.ini，按需修改后保存。
+# 注意：config.ini 已被 .gitignore 忽略，不会提交到仓库（避免泄露你的路径/账号）。
+
+[settings]
+# 照片备份根目录；每个账号会在其下建独立子文件夹
+backup_root = ~/iCloudPhotos
+# 登录凭证目录，请勿手动删改
+cookie_dir = ~/.icloud_session
+# icloudpd 可执行文件路径；若已在 PATH 中可直接写 icloudpd
+tool = icloudpd
+# iCloud 区域：中国大陆填 cn；其他地区留空
+domain = cn
+
+# 账号小节示例（复制并改成你自己的）：
+# [account_example]
+# apple_id = your-apple-id@example.com
+# folder = example          # 子文件夹名；留空则直接放备份根目录
