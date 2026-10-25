@@ -1,0 +1,88 @@
+name: Bug report
+description: Report a problem with iCloud Photo Sync
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug!
+
+        :warning: **Never share your Apple ID password, 2FA codes, or the contents of your cookie directory.**
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: A clear and concise description of the problem.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: What did you do? Which menu option or command did you run?
+      placeholder: |
+        1. Run `python sync_all.py`
+        2. Choose option 4 (full download)
+        3. ...
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      description: e.g. Windows 11, Ubuntu 24.04, macOS 15
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      description: Output of `python --version`
+      placeholder: "3.12.0"
+    validations:
+      required: true
+
+  - type: input
+    id: icloudpd
+    attributes:
+      label: icloudpd version
+      description: Output of `icloudpd --version`
+      placeholder: "1.x.x"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Which part of the tool?
+      options:
+        - Interactive menu
+        - "--sync (incremental)"
+        - "--full (full download)"
+        - Login / authentication
+        - Scheduling (Task Scheduler / cron / Actions)
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: |
+        Paste lines from `logs/sync.log`. Remove anything personal first
+        (Apple ID, local paths, cookie directory contents).
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and this is not a duplicate
+          required: true
+        - label: I removed any personal information from the log output
+          required: true
