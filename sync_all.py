@@ -1,4 +1,13 @@
 # -*- coding: utf-8 -*-
+import sys
+try:
+    if not sys.stdout.isatty():
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if not sys.stderr.isatty():
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 """iCloud 照片同步工具（多账号 / 可配置 / 可定时）
 
 把 iPhone 等设备的 iCloud 照片库，按 年/月 自动同步到本机，支持多账号，
