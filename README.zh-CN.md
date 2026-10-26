@@ -68,14 +68,16 @@ python sync_all.py
 python sync_all.py --sync                                # 所有账号增量同步
 python sync_all.py --full                                # 所有账号全量下载
 python sync_all.py --full --accounts you@example.com     # 只同步指定账号
+python sync_all.py --redact-log                          # 分享前把日志里的邮箱与路径脱敏
 ```
+> 本工具不会删除磁盘上的任何照片；非零退出码表示“本次同步没有完成”，而不是“照片被删了”。
 
 ## 配置说明（config.ini）
 
 | 键 | 含义 |
 |---|---|
 | `backup_root` | 照片备份根目录；每个账号会在其下建独立子文件夹 |
-| `cookie_dir` | icloudpd 保存登录凭证的目录，请勿手动改删 |
+| `cookie_dir` | icloudpd 保存登录凭证的目录，请勿手动改删；必须放在本机非同步目录，不要放进网盘或仓库 |
 | `tool` | icloudpd 可执行文件路径（已在 PATH 中可直接写 `icloudpd`） |
 | `domain` | iCloud 区域；**中国大陆填 `cn`**，其他地区留空 |
 | `[account_x]` | 每个账号一小节：`apple_id` 与 `folder`（子文件夹名；留空 = 备份根目录） |
@@ -92,15 +94,24 @@ python sync_all.py --full --accounts you@example.com     # 只同步指定账号
 
 仓库自带两个示例工作流（`.github/workflows/`）：
 
-- `ci.yml`：推送或 PR 时自动做语法检查与冒烟测试（多版本 Python、Ubuntu/Windows 矩阵）。
+- `ci.yml`：推送或 PR 时自动做语法检查与冒烟测试，并断言“失败场景必须返回非零退出码”（无账号、账号名写错、icloudpd 缺失、用法错误），覆盖多版本 Python 与 Ubuntu/Windows 矩阵。
 - `scheduled-sync.yml`：**自托管 runner** 上的每日同步示例，默认只手动触发；启用方法见文件内注释（GitHub 托管的 runner 无法访问你的照片和凭证，所以必须用自托管 runner）。
+
+## 安全提醒
+
+- **不要透露 Apple ID 密码、双重验证码或 `cookie_dir` 里的内容**，维护者永远不会索要这些。
+- `config.ini` 与 `logs/` 已被 `.gitignore` 排除：不要把个人路径、Apple ID 提交到仓库或贴进 issue。
+- `logs/sync.log` 里含 Apple ID 和本机绝对路径，贴到 issue 或作为 artifact 上传前，先执行
+  `python sync_all.py --redact-log` 脱敏。
+- `cookie_dir` 等同于你整个 iCloud 照片库的访问凭据，必须放在本机非同步目录
+  （不要放 OneDrive / Dropbox / iCloud Drive，也不要放进仓库）。
 
 ## 注意事项（避坑）
 
-- **退出码不可信**：icloudpd 参数错误时也可能返回 `0`。本工具以"文件数是否真的增加"判断成败。
-- **凭证会过期**（通常几周到几个月）。同步显示"无新增"时，用菜单第 `1` 项重新登录。
+- **icloudpd 自身的退出码不可信**：参数错误时也可能返回 `0`。因此本工具以“文件数 + 进程运行状态”共同判定，并输出自己的退出码（`0`/`1`/`2`，见[后台（定时）模式](#后台定时模式)）。
+- **凭证会过期**（通常几周到几个月）。同步显示“无新增”时，用菜单第 `1` 项重新登录。
 - **`--folder-structure` 必须是单个花括号块**：`"{:%Y/%m}"`，不能写成 `"{:%Y}/{:%m}"`。
-- **"手机删除、电脑跟着删"（`--auto-delete`）尚未实现**，计划在后续版本加入。本工具永远不会删除磁盘上已有的照片。
+- **“手机删除、电脑跟着删”（`--auto-delete`）尚未实现**，计划在后续版本加入。本工具永远不会删除磁盘上已有的照片。
 - 登录过程可能 1–3 分钟没有任何输出，这是正常现象，不要关闭窗口。
 
 ## 许可证
