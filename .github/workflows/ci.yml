@@ -9,6 +9,9 @@ on:
 permissions:
   contents: read
 
+env:
+  PYTHONIOENCODING: utf-8
+
 jobs:
   test:
     name: Python ${{ matrix.python-version }} on ${{ matrix.os }}
@@ -18,6 +21,10 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
         python-version: ["3.9", "3.10", "3.12"]
+        exclude:
+          # Python 3.9 is unavailable on ubuntu-latest (setup-python: "not found for ubuntu")
+          - os: ubuntu-latest
+            python-version: "3.9"
     steps:
       - uses: actions/checkout@v4
 
@@ -31,7 +38,7 @@ jobs:
 
       - name: Smoke test - menu starts and exits with 0
         shell: bash
-        run: printf '8\n' | python sync_all.py
+        run: echo 8 | python sync_all.py
 
       # 以下断言“失败必须有非零退出码”：
       # 定时任务与 CI 只能靠退出码判断成败，静默成功会让同步失败无人知晓。
@@ -70,9 +77,9 @@ jobs:
         run: |
           set +e
           python -c "
-          import configparser, io, os, sys
+          import configparser, os
           cfg = configparser.ConfigParser()
-          cfg.read_string(open('config.ini', encoding='utf-8').read() if os.path.isfile('config.ini') else '[settings]\n')
+          cfg.read('config.ini', encoding='utf-8')
           if not cfg.has_section('settings'):
               cfg.add_section('settings')
           cfg['settings']['tool'] = 'definitely-not-a-real-icloudpd-binary'
