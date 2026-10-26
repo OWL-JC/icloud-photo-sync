@@ -37,18 +37,24 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.x"
+          python-version: ">=3.8"
 
       - name: Install icloudpd
         run: pip install --upgrade icloudpd
 
       # Incremental sync of all accounts (stops after 50 already-downloaded
       # photos per account). Use `--full` for a full download instead.
+      # Exit code: 0 = success, 1 = sync failed, 2 = usage error.
       - name: Incremental sync
         run: python sync_all.py --sync
 
-      # If the sync fails, upload the log for inspection.
-      # logs/sync.log is gitignored but generated at runtime on the runner.
+      # sync.log contains Apple IDs and local absolute paths. On a public
+      # repository anyone can download workflow artifacts, so redact it before
+      # uploading. If you prefer, delete this upload step entirely.
+      - name: Redact log
+        if: failure()
+        run: python sync_all.py --redact-log
+
       - name: Upload log on failure
         if: failure()
         uses: actions/upload-artifact@v4
