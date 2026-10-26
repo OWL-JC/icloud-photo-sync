@@ -6,6 +6,8 @@
 # 照片备份根目录；每个账号会在其下建独立子文件夹
 backup_root = ~/iCloudPhotos
 # 登录凭证目录，请勿手动删改
+# 安全提醒：该目录等同于你 iCloud 照片库的完整访问凭据，
+# 必须放在本机非同步目录，不要放进仓库、网盘（OneDrive/Dropbox/iCloud Drive）同步目录
 cookie_dir = ~/.icloud_session
 # icloudpd 可执行文件路径；若已在 PATH 中可直接写 icloudpd
 tool = icloudpd
