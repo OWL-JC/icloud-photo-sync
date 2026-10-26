@@ -79,14 +79,25 @@ These are what the scheduled task runs — no human input needed:
 python sync_all.py --sync          # incremental sync of all accounts
 python sync_all.py --full          # full download of all accounts
 python sync_all.py --full --accounts you@example.com   # only this account
+python sync_all.py --redact-log    # strip emails/paths from logs/sync.log before sharing
 ```
+
+Exit codes (for schedulers and CI):
+
+| Code | Meaning |
+|------|---------|
+| `0`  | Success — new photos downloaded, or already up to date |
+| `1`  | Sync failed — no accounts, unknown account name, `icloudpd` missing/timeout/error, or file count decreased |
+| `2`  | Usage error — e.g. `--accounts` with no value |
+> Nothing is ever deleted from disk by this tool; a non-zero exit means the sync
+did not complete, not that photos were removed.
 
 ## Configuration (`config.ini`)
 
 | Key           | Meaning |
 |---------------|---------|
 | `backup_root` | Root folder for photos; each account gets its own subfolder. |
-| `cookie_dir`  | Where `icloudpd` stores login session cookies. Do not edit manually. |
+| `cookie_dir`  | Where `icloudpd` stores login session cookies. Do not edit manually — keep it on a local, non-cloud-synced path. |
 | `tool`        | Path to `icloudpd` (or just `icloudpd` if on `PATH`). |
 | `domain`      | iCloud region. **Mainland China → `cn`**; elsewhere leave empty. |
 | `[account_x]` | One section per account: `apple_id` and `folder` (subfolder name; empty = backup root). |
@@ -104,18 +115,34 @@ python sync_all.py --full --accounts you@example.com   # only this account
 
 Two example workflows ship in `.github/workflows/`:
 
-- `ci.yml` — on every push / pull request: compile check plus smoke tests
-  (menu exits cleanly, headless modes handle "no accounts" gracefully) across a
-  Python 3.8 / 3.10 / 3.12 × Ubuntu / Windows matrix.
+- `ci.yml` — on every push / pull request: compile check plus smoke tests,
+  including assertions that failure cases exit non-zero (no accounts, unknown
+  account, missing `icloudpd`, usage error), across a Python 3.8 / 3.10 / 3.12
+  × Ubuntu / Windows matrix.
 - `scheduled-sync.yml` — an example daily sync for a **self-hosted runner**
   (manual-only by default). GitHub-hosted runners cannot reach your photos or
   credentials, so enable it only on a runner you control; see the comments in
   the file for setup steps.
 
+## Security
+
+- **Never share your Apple ID password, 2FA codes, or the contents of your
+  `cookie_dir`.** Maintainers will never ask for them.
+- `config.ini` and `logs/` are gitignored — keep personal paths and Apple IDs out
+  of commits and out of issue reports.
+- `logs/sync.log` contains Apple IDs and local absolute paths. Run
+  `python sync_all.py --redact-log` before pasting it into an issue or uploading
+  it as a workflow artifact.
+- `cookie_dir` holds the credential that grants full access to your iCloud photo
+  library: keep it on a local, non-cloud-synced path (not OneDrive/Dropbox/
+  iCloud Drive, not inside a repository).
+
 ## Caveats
 
-- **Exit code is not reliable**: `icloudpd` may return `0` even on bad arguments.
-  This tool judges success by whether the file count actually grew.
+- **`icloudpd`'s own exit code is not reliable**: it may return `0` even on bad
+  arguments. This tool therefore judges success by the file count plus the
+  process run status, and reports its own exit codes (`0`/`1`/`2`) — see
+  [Background modes](#background-scheduled-modes).
 - **Credentials expire** (usually weeks to months). When sync reports "no new
   files", re-run menu option `1` to log in again.
 - **`--folder-structure` must be a single brace block**: `"{:%Y/%m}"`, not
