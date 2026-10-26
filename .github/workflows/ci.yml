@@ -17,6 +17,93 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
+        python-version: ["3.9", "3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Compile check
+        run: python -m py_compile sync_all.py
+
+      - name: Smoke test - menu starts and exits with 0
+        shell: bash
+        run: printf '8\n' | python sync_all.py
+
+      # 以下三条断言“失败必须有非零退出码”：
+      # 定时任务与 CI 只能靠退出码判断成败，静默成功会让同步失败无人知晓。
+      - name: Smoke test - no accounts must exit non-zero
+        shell: bash
+        run: |
+          set +e
+          python sync_all.py --sync
+          code=$?
+          set -e
+          echo "exit code = $code"
+          if [ "$code" -eq 0 ]; then echo "FAILED: expected non-zero"; exit 1; fi
+
+      - name: Smoke test - unknown account must exit non-zero
+        shell: bash
+        run: |
+          set +e
+          python sync_all.py --full --accounts nobody@example.com
+          code=$?
+          set -e
+          echo "exit code = $code"
+          if [ "$code" -eq 0 ]; then echo "FAILED: expected non-zero"; exit 1; fi
+
+      - name: Smoke test - --accounts without value must exit non-zero
+        shell: bash
+        run: |
+          set +e
+          python sync_all.py --full --accounts
+          code=$?
+          set -e
+          echo "exit code = $code"
+          if [ "$code" -eq 0 ]; then echo "FAILED: expected non-zero"; exit 1; fi
+
+      - name: Smoke test - missing icloudpd must exit non-zero
+        shell: bash
+        run: |
+          set +e
+          python -c "
+          import configparser, io, os, sys
+          cfg = configparser.ConfigParser()
+          cfg.read_string(open('config.ini', encoding='utf-8').read() if os.path.isfile('config.ini') else '[settings]\n')
+          if not cfg.has_section('settings'):
+              cfg.add_section('settings')
+          cfg['settings']['tool'] = 'definitely-not-a-real-icloudpd-binary'
+          cfg['settings']['backup_root'] = 'ci_tmp_backup'
+          cfg['account_ci'] = {'apple_id': 'ci@example.com', 'folder': 'ci'}
+          with open('config.ini', 'w', encoding='utf-8') as f:
+              cfg.write(f)
+          "
+          python sync_all.py --sync
+          code=$?
+          set -e
+          echo "exit code = $code"
+          if [ "$code" -eq 0 ]; then echo "FAILED: expected non-zero"; exit 1; finame: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
         python-version: ["3.8", "3.10", "3.12"]
     steps:
       - uses: actions/checkout@v4
