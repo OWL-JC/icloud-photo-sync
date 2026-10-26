@@ -31,9 +31,11 @@ except Exception:
     - 账号、备份地址等都写在 config.ini 里，可随时改。
     - 密码不在本工具保存。登录时在终端输入密码+手机验证码，
       icloudpd 把登录凭证(cookie)存到 cookie_dir，之后同步无需密码。
-    - “手机删除、电脑跟着删”功能本期未实现，留待后续版本。
-      届时成败判定需从“文件数是否增加”改为“文件名集合差集”，
-      否则镜像同步下 delta 为 0 或为负会被误报为失败。
+    - 成败判定已改为"文件名集合差集"（不再只看文件总数增减）：
+      能同时算出"新增了哪些"与"消失了哪些"，
+      避免"少了 2 个又多了 2 个"导致 delta==0 被误判成成功。
+    - “手机删除、电脑跟着删”功能本期未实现，留待后续版本；
+      届时实现需区分"预期的镜像删除"与"异常的消失"。
 """
 import os
 import sys
@@ -251,6 +253,41 @@ def count_files(root):
     return n, size
 
 
+def list_files(root):
+    """列出目录下所有文件的相对路径集合。遍历失败返回 None。
+
+    与 count_files 同样要求"失败必须返回 None"：目录丢失或无权限时
+    不能退化成空集合，否则会被误判成"一个文件都没有"。
+    """
+    if not os.path.isdir(root):
+        log("统计目录失败（目录不存在或无权限）：%s" % root)
+        return None
+
+    def _onerror(e):
+        raise e   # 让 scandir 的报错真正抛出，避免被 os.walk 静默忽略
+
+    out = set()
+    try:
+        for r, _d, files in os.walk(root, onerror=_onerror):
+            for f in files:
+                out.add(os.path.relpath(os.path.join(r, f), root))
+    except Exception as e:
+        log("统计目录失败（本次结果不可用于判断同步成败）：%s  %s" % (root, e))
+        return None
+    return out
+
+
+def _size_of(root, paths):
+    """统计给定相对路径集合的总字节数（单个文件取大小失败则跳过）。"""
+    total = 0
+    for p in paths:
+        try:
+            total += os.path.getsize(os.path.join(root, p))
+        except OSError:
+            pass
+    return total
+
+
 def run_icloudpd(cmd, interactive):
     t0 = time.time()
     code = 0
@@ -297,29 +334,43 @@ def sync_one(acc, cfg, mode, interactive):
     # mode == "full": 不加任何限制，下载全部
     # 注意：本期未实现 --auto-delete（手机删除电脑跟着删），后续版本再加。
 
-    before = count_files(directory)
-    if before is None:
+    before_paths = list_files(directory)
+    if before_paths is None:
         log("[%s] 结果：失败（同步前统计目录失败）。" % acc["apple_id"])
         return EXIT_FAIL
-    before_n, before_sz = before
+    before_n = len(before_paths)
+    before_sz = _size_of(directory, before_paths)   # 仅用于展示体积
     log("[%s] 开始同步 模式=%s 目录=%s before=%d文件/%.1fMB" %
         (acc["apple_id"], mode, directory, before_n, before_sz / MB))
     elapsed, code = run_icloudpd(cmd, interactive)
-    after = count_files(directory)
-    if after is None:
+    after_paths = list_files(directory)
+    if after_paths is None:
         log("[%s] 结果：失败（同步后统计目录失败）。" % acc["apple_id"])
         return EXIT_FAIL
-    after_n, after_sz = after
-    delta = after_n - before_n
-    log("[%s] 结束 after=%d文件/%.1fMB 本次+%d文件(+%.1fMB) 耗时%.1f分 退出码%d" %
-        (acc["apple_id"], after_n, after_sz / MB, delta,
-         (after_sz - before_sz) / MB, elapsed / 60.0, code))
+    after_n = len(after_paths)
+    after_sz = _size_of(directory, after_paths)
 
-    # icloudpd 退出码不可信（参数错也返回 0），故以文件数与运行状态共同判定
+    # 成败判定用"文件名集合差集"，而不是只看文件总数增减：
+    # 只看总数时，"少了 2 个又多了 2 个"会让 delta==0，被误判成成功；
+    # 差集能同时算出"新增了哪些"与"消失了哪些"，真正暴露备份目录被改动/误删。
+    added = after_paths - before_paths
+    removed = before_paths - after_paths
+    delta = len(added)
+
+    log("[%s] 结束 after=%d文件/%.1fMB 本次新增%d个(+%.1fMB) 消失%d个 耗时%.1f分 退出码%d" %
+        (acc["apple_id"], after_n, after_sz / MB, delta,
+         (after_sz - before_sz) / MB, len(removed), elapsed / 60.0, code))
+
+    # icloudpd 退出码不可信（参数错也返回 0），故以文件集合变化与运行状态共同判定
     if code == -1:
         # 找不到 icloudpd、超时或运行异常
         log("[%s] 结果：失败（icloudpd 运行异常，请检查 tool 路径、网络与登录凭证）。"
             % acc["apple_id"])
+        return EXIT_FAIL
+    if removed:
+        # 同步过程中有文件消失（被手动删除 / 其他程序清理），必须告警而非静默
+        log("[%s] 结果：失败（同步中有 %d 个文件消失，请检查备份目录是否被改动：%s）。"
+            % (acc["apple_id"], len(removed), "、".join(sorted(removed)[:5])))
         return EXIT_FAIL
     if delta > 0:
         log("[%s] 结果：OK，有新照片。" % acc["apple_id"])
@@ -327,8 +378,6 @@ def sync_one(acc, cfg, mode, interactive):
     if delta == 0:
         log("[%s] 结果：无新增（可能已最新，或登录凭证已过期需重新登录）。" % acc["apple_id"])
         return EXIT_OK
-    log("[%s] 结果：失败（文件数减少了 %d 个，请检查目录是否被改动）。"
-        % (acc["apple_id"], -delta))
     return EXIT_FAIL
 
 

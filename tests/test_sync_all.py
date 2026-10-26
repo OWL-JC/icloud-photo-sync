@@ -155,6 +155,23 @@ def test_count_files_missing_directory_returns_none(tmp_path):
     assert sync_all.count_files(str(tmp_path / "nope")) is None
 
 
+# ----------------------------------------------------------------- list_files
+def test_list_files_returns_relative_paths(tmp_path):
+    (tmp_path / "a.txt").write_text("1")
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    (sub / "b.txt").write_text("12")
+    assert sync_all.list_files(str(tmp_path)) == {"a.txt", os.path.join("sub", "b.txt")}
+
+
+def test_list_files_empty_directory(tmp_path):
+    assert sync_all.list_files(str(tmp_path)) == set()
+
+
+def test_list_files_missing_directory_returns_none(tmp_path):
+    assert sync_all.list_files(str(tmp_path / "nope")) is None
+
+
 # ---------------------------------------------------------- account_directory
 def test_account_directory_with_folder():
     assert sync_all.account_directory(
@@ -232,6 +249,25 @@ def test_sync_one_fail_when_files_vanish_during_run(tmp_path, monkeypatch):
     assert sync_all.sync_one(_acc(), _cfg(tmp_path), "full", False) == sync_all.EXIT_FAIL
 
 
+def test_sync_one_detects_removal_even_when_total_unchanged(tmp_path, monkeypatch):
+    """集合差集的核心价值：文件总数不变时，仍能发现"有文件消失"。
+
+    旧逻辑只比较文件总数：少了 1 个又多了 1 个，delta==0 会被判成功（假成功）。
+    新逻辑用集合差集，同时得到"新增"与"消失"两个集合，此处应判失败。
+    """
+    _isolate_logs(monkeypatch)
+    (tmp_path / "old.jpg").write_bytes(b"x" * 10)
+
+    def fake_run(cmd, interactive):
+        os.remove(os.path.join(str(tmp_path), "old.jpg"))
+        (tmp_path / "new.jpg").write_bytes(b"y" * 10)
+        return 1.0, 0
+
+    monkeypatch.setattr(sync_all, "run_icloudpd", fake_run)
+    # 总数前后都是 1，但内容变了：old.jpg 消失、new.jpg 新增 -> 必须失败
+    assert sync_all.sync_one(_acc(), _cfg(tmp_path), "full", False) == sync_all.EXIT_FAIL
+
+
 def test_sync_one_fail_when_icloudpd_broken(tmp_path, monkeypatch):
     """找不到 icloudpd / 超时 / 异常：即使 delta>0 也必须判失败。"""
     _isolate_logs(monkeypatch)
@@ -244,11 +280,25 @@ def test_sync_one_fail_when_icloudpd_broken(tmp_path, monkeypatch):
     assert sync_all.sync_one(_acc(), _cfg(tmp_path), "full", False) == sync_all.EXIT_FAIL
 
 
-def test_sync_one_fail_when_directory_count_fails(tmp_path, monkeypatch):
-    """统计目录失败（返回 None）-> 不能拿来判定成败，必须判失败。"""
+def test_sync_one_fail_when_before_listing_fails(tmp_path, monkeypatch):
+    """同步前"列出文件"失败（返回 None）-> 不能拿来判定成败，必须判失败。"""
     _isolate_logs(monkeypatch)
     monkeypatch.setattr(sync_all, "run_icloudpd", lambda c, i: (1.0, 0))
-    monkeypatch.setattr(sync_all, "count_files", lambda root: None)
+    monkeypatch.setattr(sync_all, "list_files", lambda root: None)
+    assert sync_all.sync_one(_acc(), _cfg(tmp_path), "full", False) == sync_all.EXIT_FAIL
+
+
+def test_sync_one_fail_when_after_listing_fails(tmp_path, monkeypatch):
+    """同步后"列出文件"失败 -> 同样必须判失败。"""
+    _isolate_logs(monkeypatch)
+    calls = {"n": 0}
+
+    def fake_list(root):
+        calls["n"] += 1
+        return None if calls["n"] > 1 else set()
+
+    monkeypatch.setattr(sync_all, "run_icloudpd", lambda c, i: (1.0, 0))
+    monkeypatch.setattr(sync_all, "list_files", fake_list)
     assert sync_all.sync_one(_acc(), _cfg(tmp_path), "full", False) == sync_all.EXIT_FAIL
 
 
