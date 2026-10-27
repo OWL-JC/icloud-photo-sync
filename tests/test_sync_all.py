@@ -14,6 +14,7 @@
   5. sync_one      ：delta>0 / ==0 / <0 与 icloudpd 异常码 的判定
 """
 import os
+import json
 import sys
 
 import pytest
@@ -379,3 +380,109 @@ def test_menu_exits_zero_under_cp1252_stdout():
     err = p.stderr.decode("utf-8", "replace")
     assert "UnicodeEncodeError" not in err, err
     assert p.returncode == 0, err
+
+
+# ----------------------------------------- "需关注"标记（文件消失）
+def test_sync_one_writes_attention_marker_on_removal(tmp_path, monkeypatch):
+    """自动模式下文件消失：写 NEEDS_ATTENTION 标记，且不自动判失败。"""
+    _isolate_logs(monkeypatch)
+    monkeypatch.setattr(sync_all, "LOGDIR", str(tmp_path / "logs"))
+    (tmp_path / "gone.jpg").write_bytes(b"x" * 10)
+
+    def fake_run(cmd, interactive):
+        os.remove(os.path.join(str(tmp_path), "gone.jpg"))
+        return 1.0, 0
+
+    monkeypatch.setattr(sync_all, "run_icloudpd", fake_run)
+    res = sync_all.sync_one(_acc(), _cfg(tmp_path), "full", False)
+    assert res == sync_all.EXIT_OK
+    marker = os.path.join(str(tmp_path / "logs"), "NEEDS_ATTENTION.flag")
+    assert os.path.isfile(marker)
+    d = json.load(open(marker, encoding="utf-8"))
+    assert "ci@example.com" in d and d["ci@example.com"]
+
+
+def test_sync_one_no_reprompt_same_removal(tmp_path, monkeypatch):
+    """同一批消失第二次同步不再弹询问（确认后不重复打扰）。"""
+    _isolate_logs(monkeypatch)
+    monkeypatch.setattr(sync_all, "LOGDIR", str(tmp_path / "logs"))
+    calls = {"input": 0}
+
+    def fake_input(*a):
+        calls["input"] += 1
+        return "n"
+
+    def fake_run(cmd, interactive):
+        os.remove(os.path.join(str(tmp_path), "a.jpg"))
+        return 1.0, 0
+
+    monkeypatch.setattr(sync_all, "run_icloudpd", fake_run)
+    monkeypatch.setattr("builtins.input", fake_input)
+    (tmp_path / "a.jpg").write_bytes(b"x" * 10)
+    sync_all.sync_one(_acc(), _cfg(tmp_path), "full", True)   # 第一次：应弹一次
+    (tmp_path / "a.jpg").write_bytes(b"x" * 10)
+    sync_all.sync_one(_acc(), _cfg(tmp_path), "full", True)   # 第二次：同批，不再弹
+    assert calls["input"] == 1, "同一批消失不应重复询问"
+
+
+def test_sync_one_clears_marker_after_redownload(tmp_path, monkeypatch):
+    """交互确认重新下载补齐后，清除该账号的需关注标记。"""
+    _isolate_logs(monkeypatch)
+    monkeypatch.setattr(sync_all, "LOGDIR", str(tmp_path / "logs"))
+    (tmp_path / "a.jpg").write_bytes(b"x" * 10)
+
+    def fake_run(cmd, interactive):
+        p = os.path.join(str(tmp_path), "a.jpg")
+        if os.path.isfile(p):
+            os.remove(p)              # 第一次：删掉
+        else:
+            open(p, "wb").write(b"x" * 10)   # 用户确认重下：补回
+        return 1.0, 0
+
+    monkeypatch.setattr(sync_all, "run_icloudpd", fake_run)
+    monkeypatch.setattr("builtins.input", lambda *a: "y")
+    sync_all.sync_one(_acc(), _cfg(tmp_path), "full", True)
+    marker = os.path.join(str(tmp_path / "logs"), "NEEDS_ATTENTION.flag")
+    d = json.load(open(marker, encoding="utf-8")) if os.path.isfile(marker) else {}
+    assert "ci@example.com" not in d, "补齐后标记应被清除"
+
+
+def test_sync_one_second_trigger_reprompts(tmp_path, monkeypatch):
+    """不同批次消失（第二次触发）应再次弹询问。"""
+    _isolate_logs(monkeypatch)
+    monkeypatch.setattr(sync_all, "LOGDIR", str(tmp_path / "logs"))
+    (tmp_path / "a.jpg").write_bytes(b"x" * 10)
+    (tmp_path / "b.jpg").write_bytes(b"x" * 10)
+    calls = {"input": 0}
+
+    def fake_input(*a):
+        calls["input"] += 1
+        return "n"
+
+    def fake_run_factory(target):
+        def _run(cmd, interactive):
+            os.remove(os.path.join(str(tmp_path), target))
+            return 1.0, 0
+        return _run
+
+    monkeypatch.setattr("builtins.input", fake_input)
+    monkeypatch.setattr(sync_all, "run_icloudpd", fake_run_factory("a.jpg"))
+    sync_all.sync_one(_acc(), _cfg(tmp_path), "full", True)   # 第一次：a 消失
+    monkeypatch.setattr(sync_all, "run_icloudpd", fake_run_factory("b.jpg"))
+    sync_all.sync_one(_acc(), _cfg(tmp_path), "full", True)   # 第二次：b 消失（不同批次）
+    assert calls["input"] == 2, "不同批次消失应再次询问"
+
+
+def test_redact_log_masks_drive_path(tmp_path, monkeypatch):
+    """脱敏应把 Windows 盘符绝对路径（含备份盘）也抹掉，消除残留泄露。"""
+    logs = tmp_path / "logs"
+    logs.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(sync_all, "LOGDIR", str(logs))
+    p = os.path.join(str(logs), "sync.log")
+    with open(p, "w", encoding="utf-8") as f:
+        f.write("Apple ID a@b.com 备份目录 E:\\01_照片与媒体\\iCloud照片\\IMG.jpg 用户 C:\\Users\\OWL\\x\n")
+    sync_all.redact_log()
+    txt = open(p, encoding="utf-8").read()
+    assert "***@***" in txt
+    assert "E:\\***" in txt
+    assert "01_照片与媒体" not in txt

@@ -23,8 +23,9 @@ except Exception:
 
 退出码（供定时任务 / CI 判断成败）：
     0  同步正常结束（有新照片或已最新都算成功）
-    1  同步失败（无账号、账号名写错、icloudpd 运行异常/超时、文件数减少、
-       目录统计失败等）——注意：本工具不会删除任何照片，仅下载
+    1  同步失败（无账号、账号名写错、icloudpd 运行异常/超时、目录统计失败等）；
+       注意：文件消失不再判失败，改为写"需关注"标记（logs/NEEDS_ATTENTION.flag），
+       本工具不会删除任何照片，仅下载
     2  命令行用法错误（例如 --accounts 后面没跟账号）
 
 设计说明：
@@ -44,6 +45,8 @@ import time
 import subprocess
 import datetime
 import configparser
+import json
+import hashlib
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -330,6 +333,50 @@ def account_directory(s, acc):
     return os.path.join(s["backup_root"], acc["folder"]) if acc["folder"] else s["backup_root"]
 
 
+def _attention_marker_path():
+    return os.path.join(LOGDIR, "NEEDS_ATTENTION.flag")
+
+
+def _load_attention_marker():
+    """读取'需关注'标记，返回 {apple_id: signature} 字典；不存在/损坏返回 {}。"""
+    p = _attention_marker_path()
+    if not os.path.isfile(p):
+        return {}
+    try:
+        with open(p, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_attention_marker(apple_id, sig):
+    os.makedirs(LOGDIR, exist_ok=True)
+    data = _load_attention_marker()
+    data[apple_id] = sig
+    try:
+        with open(_attention_marker_path(), "w", encoding="utf-8") as f:
+            json.dump(data, f)
+    except Exception:
+        pass
+
+
+def _clear_attention_marker(apple_id):
+    data = _load_attention_marker()
+    if apple_id in data:
+        del data[apple_id]
+        try:
+            with open(_attention_marker_path(), "w", encoding="utf-8") as f:
+                json.dump(data, f)
+        except Exception:
+            pass
+
+
+def _removed_signature(removed):
+    """用消失文件集合算出稳定指纹：同一批消失两次得到相同值，不同批次得到不同值。"""
+    return hashlib.md5("\n".join(sorted(removed)).encode("utf-8")).hexdigest()
+
+
 def sync_one(acc, cfg, mode, interactive):
     """同步单个账号，返回 EXIT_OK / EXIT_FAIL。"""
     s = cfg["settings"]
@@ -375,31 +422,46 @@ def sync_one(acc, cfg, mode, interactive):
             % acc["apple_id"])
         return EXIT_FAIL
     # 文件消失不再自动判定失败：备份目录被手动改动 / 清理时，交由用户自己决定。
+    # 但会写一个"需关注"标记（logs/NEEDS_ATTENTION.flag），供通知/人工排查读取；
+    # 同一批消失文件只提示一次，直到出现不同的新一批消失（第二次触发）才再提示。
     if removed:
-        log("[%s] 警告：本次同步中有 %d 个文件消失（可能被手动删除或清理）：%s"
-            % (acc["apple_id"], len(removed), "、".join(sorted(removed)[:5])))
-        if interactive:
-            # 手动运行模式：让用户自己选择是否重新下载以补齐
-            try:
-                ans = input("[%s] 发现 %d 个文件消失，是否重新下载以补齐？[y/N] "
-                            % (acc["apple_id"], len(removed)))
-            except EOFError:
-                ans = ""
-            if ans.strip().lower() in ("y", "yes", "是"):
-                log("[%s] 用户选择重新下载，再次运行同步..." % acc["apple_id"])
-                elapsed, code = run_icloudpd(cmd, interactive)
-                after_paths = list_files(directory)
-                if after_paths is None:
-                    log("[%s] 结果：失败（重新同步后统计目录失败）。" % acc["apple_id"])
-                    return EXIT_FAIL
-                after_n = len(after_paths)
-                after_sz = _size_of(directory, after_paths)
-                added = after_paths - before_paths
-                removed = before_paths - after_paths
-                delta = len(added)
-                log("[%s] 重新同步后：新增%d个 仍消失%d个" %
-                    (acc["apple_id"], delta, len(removed)))
-        # 非交互（自动运行）模式仅保留上述警告，不自动判失败，由用户后续自行决定
+        sig = _removed_signature(removed)
+        seen_sig = _load_attention_marker().get(acc["apple_id"])
+        if sig != seen_sig:
+            # 首次发现这批消失文件，或出现与上一次不同的新一批（第二次触发）
+            _save_attention_marker(acc["apple_id"], sig)
+            log("[%s] 警告：本次同步中有 %d 个文件消失（可能被手动删除或清理）：%s"
+                % (acc["apple_id"], len(removed), "、".join(sorted(removed)[:5])))
+            if interactive:
+                # 手动运行模式：让用户自己选择是否重新下载以补齐
+                try:
+                    ans = input("[%s] 发现 %d 个文件消失，是否重新下载以补齐？[y/N] "
+                                % (acc["apple_id"], len(removed)))
+                except EOFError:
+                    ans = ""
+                if ans.strip().lower() in ("y", "yes", "是"):
+                    log("[%s] 用户选择重新下载，再次运行同步..." % acc["apple_id"])
+                    elapsed, code = run_icloudpd(cmd, interactive)
+                    after_paths = list_files(directory)
+                    if after_paths is None:
+                        log("[%s] 结果：失败（重新同步后统计目录失败）。" % acc["apple_id"])
+                        return EXIT_FAIL
+                    after_n = len(after_paths)
+                    after_sz = _size_of(directory, after_paths)
+                    added = after_paths - before_paths
+                    removed = before_paths - after_paths
+                    delta = len(added)
+                    log("[%s] 重新同步后：新增%d个 仍消失%d个" %
+                        (acc["apple_id"], delta, len(removed)))
+                    # 重新同步后这批文件已补齐，则清除该账号的"需关注"标记
+                    if not removed:
+                        _clear_attention_marker(acc["apple_id"])
+            # 非交互（自动运行）模式：仅写标记 + 日志，由通知/用户后续处理；不自动判失败
+        else:
+            # 同一批消失文件已记录过，不再重复提示/报警，避免每次同步都打扰；
+            # 直到出现不同的新一批消失（第二次触发）才再次提示
+            log("[%s] 提示：此前已记录 %d 个文件消失且未变化，本次跳过重复提示。"
+                % (acc["apple_id"], len(removed)))
     if delta > 0:
         log("[%s] 结果：OK，有新照片。" % acc["apple_id"])
         return EXIT_OK
@@ -524,6 +586,8 @@ def redact_log():
     # Windows 与 POSIX 两类用户目录
     txt = re.sub(r"(?i)([a-z]:\\+users\\+)[^\\\s\"']+", r"\1***", txt)
     txt = re.sub(r"(/home/|/Users/)[^\s/\"']+", r"\1***", txt)
+    # 任何 Windows 盘符绝对路径（含备份盘 E:\...）也抹掉，避免泄露本机目录结构
+    txt = re.sub(r"(?i)([a-z]:\\+)[^\s\"'<>|]+", r"\1***", txt)
     try:
         with open(path, "w", encoding="utf-8") as f:
             f.write(txt)
