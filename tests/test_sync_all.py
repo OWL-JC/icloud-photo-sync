@@ -121,12 +121,6 @@ def test_safe_folder_rejects_windows_absolute_path():
     assert sync_all.safe_folder("C:\\Windows", "someone@example.com") == "someoneexamplecom"
 
 
-@pytest.mark.xfail(
-    reason="已知缺陷（待修）：Windows 上 POSIX 绝对路径 /etc/passwd 被 replace 成 "
-           "\\etc\\passwd，而 ntpath.isabs() 判为 False 未拦截；"
-           "os.path.join(root,'\\etc\\passwd') 会丢弃 root 落到盘符根目录，"
-           "造成目录逃逸。修好后请把本 xfail 标记去掉。",
-)
 def test_safe_folder_rejects_posix_absolute_path():
     # 期望：POSIX 绝对路径同样应回退为默认子文件夹名
     assert sync_all.safe_folder("/etc/passwd", "someone@example.com") == "someoneexamplecom"

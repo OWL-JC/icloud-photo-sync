@@ -145,8 +145,15 @@ def safe_folder(folder, apple_id):
     f = folder.strip()
     if not f:
         return ""
+    # 拒绝任何形式的绝对路径或盘符相对路径：否则 join 会逃逸到备份根目录之外。
+    #   /etc/passwd          -> POSIX 根路径；Windows 上 isabs 判 False（只认盘符/UNC）
+    #   以反斜杠开头的路径     -> Windows 根路径；isabs 也判 False
+    #   含冒号的盘符路径（如 C:foo）-> 部分情况 isabs 为 False
+    if os.path.isabs(f) or f[0] in ("/", "\\") or ":" in f:
+        log("配置项 folder 不合法（%s），已回退为默认子文件夹。" % folder)
+        return sanitize_folder(apple_id)
     f = f.replace("/", os.sep)
-    if os.path.isabs(f) or ".." in f.split(os.sep):
+    if ".." in f.split(os.sep):
         log("配置项 folder 不合法（%s），已回退为默认子文件夹。" % folder)
         return sanitize_folder(apple_id)
     return f
