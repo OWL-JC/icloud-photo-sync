@@ -23,7 +23,7 @@
 
 ## 环境要求
 
-- Python 3.7+
+- Python 3.9+
 - 已安装 [`icloudpd`](https://github.com/boredazfcuk/icloud_photos_downloader) 并在 PATH 中可用（或在 `config.ini` 里填完整路径）。
 - 已开启 iCloud 照片的 Apple ID，且登录时能完成双重验证（密码 + 手机/设备验证码）。
 
@@ -75,7 +75,7 @@ python sync_all.py --redact-log                          # 分享前把日志里
 | 退出码 | 含义 |
 |---|---|
 | `0` | 成功——有新照片，或已是最新 |
-| `1` | 同步失败——没有账号、账号名写错、icloudpd 缺失/超时/运行异常、文件数减少 |
+| `1` | 同步失败——没有账号、账号名写错、icloudpd 缺失/超时/运行异常、目录统计失败（目录丢失/无权限） |
 | `2` | 用法错误——例如 `--accounts` 后面没有跟账号 |
 
 > 本工具不会删除磁盘上的任何照片；非零退出码表示"本次同步没有完成"，而不是"照片被删了"。
@@ -88,12 +88,31 @@ python sync_all.py --redact-log                          # 分享前把日志里
 | `cookie_dir` | icloudpd 保存登录凭证的目录，请勿手动改删；必须放在本机非同步目录，不要放进网盘或仓库 |
 | `tool` | icloudpd 可执行文件路径（已在 PATH 中可直接写 `icloudpd`） |
 | `domain` | iCloud 区域；**中国大陆填 `cn`**，其他地区留空 |
+| `auto_delete` | 镜像删除——设为 `true` 时，iCloud 上已删除的照片本机也会同步删除（破坏性，由 `icloudpd --auto-delete` 实现，需 `icloudpd>=1.12.0`）。默认 `false` |
 | `[account_x]` | 每个账号一小节：`apple_id` 与 `folder`（子文件夹名；留空 = 备份根目录） |
 
 ## 定时同步
 
-- **Windows**：用菜单第 `6` 项创建每日任务计划程序任务（第 `4` 项可定时一次性全量下载）。
-- **Linux / macOS**：用 `cron`。例如每天 09:30 增量同步：
+同步是**纯本地**的——**不**需要 GitHub Actions，也不依赖自托管 runner。本仓库里的
+`scheduled-sync.yml` 只是给“自己有自托管 runner”的人参考用的示例；推荐用下面的方式定时同步。
+
+**Windows（推荐，非交互）：**
+
+```bash
+python install_scheduler.py --daily 21:00
+# 或指定时间的一次性全量下载：
+python install_scheduler.py --once 23:30 --accounts you@example.com
+# 查看 / 删除已创建的任务：
+python install_scheduler.py --show
+python install_scheduler.py --remove
+```
+
+该脚本会在 Windows“任务计划程序”里创建一条任务，每天执行 `python sync_all.py --sync`
+（或一次性执行 `python sync_all.py --full --accounts ...`），全程无需 GitHub。
+
+**Windows（交互菜单）**：用菜单第 `6` 项创建每日任务（第 `4` 项可定时一次性全量下载）。
+
+**Linux / macOS**：用 `cron`。例如每天 09:30 增量同步：
   ```cron
   30 9 * * * /usr/bin/python3 /path/to/icloud-photo-sync/sync_all.py --sync
   ```
@@ -102,7 +121,7 @@ python sync_all.py --redact-log                          # 分享前把日志里
 
 仓库自带两个示例工作流（`.github/workflows/`）：
 
-- `ci.yml`：推送或 PR 时自动做语法检查与冒烟测试，并断言"失败场景必须返回非零退出码"（无账号、账号名写错、icloudpd 缺失、用法错误），覆盖多版本 Python 与 Ubuntu/Windows 矩阵。
+- `ci.yml`：推送或 PR 时自动做语法检查、ruff 静态检查与冒烟测试，并断言"失败场景必须返回非零退出码"（无账号、账号名写错、icloudpd 缺失、用法错误），覆盖 Python 3.9 / 3.10 / 3.12 × Ubuntu / Windows 矩阵。
 - `scheduled-sync.yml`：**自托管 runner** 上的每日同步示例，默认只手动触发；启用方法见文件内注释（GitHub 托管的 runner 无法访问你的照片和凭证，所以必须用自托管 runner）。
 
 ## 安全提醒
@@ -119,7 +138,7 @@ python sync_all.py --redact-log                          # 分享前把日志里
 - **icloudpd 自身的退出码不可信**：参数错误时也可能返回 `0`。因此本工具以"文件数 + 进程运行状态"共同判定，并输出自己的退出码（`0`/`1`/`2`，见[后台（定时）模式](#后台定时模式)）。
 - **凭证会过期**（通常几周到几个月）。同步显示"无新增"时，用菜单第 `1` 项重新登录。
 - **`--folder-structure` 必须是单个花括号块**：`"{:%Y/%m}"`，不能写成 `"{:%Y}/{:%m}"`。
-- **"手机删除、电脑跟着删"（`--auto-delete`）尚未实现**，计划在后续版本加入。本工具永远不会删除磁盘上已有的照片。
+- **"手机删除、电脑跟着删"（`--auto-delete`）为可选项**：在 `[settings]` 设 `auto_delete = true` 即可开启。开启后，iCloud 上已删除的照片本机也会同步删除（破坏性，透传给 `icloudpd --auto-delete`，需 `icloudpd>=1.12.0`）；关闭（默认）时，本工具**绝不会删除磁盘上已有的照片**，文件消失只会在 `logs/NEEDS_ATTENTION.flag` 留下"需关注"标记。
 - 登录过程可能 1–3 分钟没有任何输出，这是正常现象，不要关闭窗口。
 
 ## 许可证

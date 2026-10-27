@@ -1,0 +1,9 @@
+# 运行依赖（仅文档/版本固定用途）
+#
+# 本工具在运行时只依赖 Python 标准库；icloudpd 是作为外部可执行文件通过
+# subprocess 调用的（不是 pip 包），所以这里仅做“版本固定”，并非 Python import 依赖。
+# 实际运行前请按 icloudpd 官方文档把它装到 PATH 中（或把完整路径写进 config.ini 的 tool）。
+#
+# --auto-delete（手机删、电脑跟着删）需要 icloudpd >= 1.12.0；
+# 低于该版本时即使 config.ini 设了 auto_delete=true 也不会生效。
+icloudpd>=1.12.0

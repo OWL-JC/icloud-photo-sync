@@ -1,0 +1,21 @@
+[project]
+name = "icloud-photo-sync"
+version = "1.0.0"
+description = "Menu-driven iCloud Photos sync wrapper around icloudpd (multi-account, scheduled)"
+requires-python = ">=3.9"
+# icloudpd 通过 subprocess 调用，不是 Python import 依赖，仅在此固定最低版本。
+dependencies = ["icloudpd>=1.12.0"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+# 选一个务实、不喧宾夺主的子集作为 CI 质量门禁：
+#   E  pycodestyle 错误（基础风格）
+#   F  pyflakes（未使用变量/未定义名等真实隐患）
+#   I  导入排序（isort，可 --fix 自动修复）
+#   W  pycodestyle 警告
+select = ["E", "F", "I", "W"]
+# 顶部编码兜底（sys.stdout.reconfigure）与 main() 内的 lazy import 属刻意设计，忽略。
+ignore = ["E402"]

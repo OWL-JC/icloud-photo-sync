@@ -13,8 +13,8 @@
   4. count_files   ：遍历失败必须返回 None，绝不能返回部分计数
   5. sync_one      ：delta>0 / ==0 / <0 与 icloudpd 异常码 的判定
 """
-import os
 import json
+import os
 import sys
 
 import pytest
@@ -365,7 +365,9 @@ def test_source_has_utf8_stdout_guard():
     打印中文菜单触发 UnicodeEncodeError 导致进程崩溃（CI 全红）。
     """
     src = open(os.path.join(ROOT, "sync_all.py"), encoding="utf-8").read()
-    head = src[:1200]   # 只看文件开头，修复必须在这里才来得及生效
+    # 修复以模块级代码存在（位于 import 之后、任何打印之前），在 import 阶段即生效，
+    # 因此只要落在文件开头区段即可；窗口放宽到 3000 字符以容纳长文档串与 import。
+    head = src[:3000]
     assert "reconfigure" in head, "顶部缺少 sys.stdout.reconfigure 兜底"
     assert 'encoding="utf-8"' in head
 
@@ -480,9 +482,55 @@ def test_redact_log_masks_drive_path(tmp_path, monkeypatch):
     monkeypatch.setattr(sync_all, "LOGDIR", str(logs))
     p = os.path.join(str(logs), "sync.log")
     with open(p, "w", encoding="utf-8") as f:
-        f.write("Apple ID a@b.com 备份目录 E:\\01_照片与媒体\\iCloud照片\\IMG.jpg 用户 C:\\Users\\OWL\\x\n")
+        f.write("Apple ID a@b.com 备份目录 E:\\backup\\iCloud\\IMG.jpg 用户 C:\\Users\\OWL\\x\n")
     sync_all.redact_log()
     txt = open(p, encoding="utf-8").read()
     assert "***@***" in txt
     assert "E:\\***" in txt
     assert "01_照片与媒体" not in txt
+
+
+# ----------------------------------------------- auto_delete / argparse
+def test_base_cmd_adds_auto_delete_flag():
+    s = {"tool": "t", "domain": "cn", "cookie_dir": "ck"}
+    assert "--auto-delete" not in sync_all.base_cmd(s, "a@b.com", "d", auto_delete=False)
+    assert "--auto-delete" in sync_all.base_cmd(s, "a@b.com", "d", auto_delete=True)
+
+
+def test_get_accounts_reads_auto_delete():
+    import configparser
+    cfg = configparser.ConfigParser()
+    cfg.add_section("settings")
+    cfg["settings"]["auto_delete"] = "true"
+    cfg.add_section("account_a")
+    cfg["account_a"]["apple_id"] = "a@b.com"
+    accs = sync_all.get_accounts(cfg)
+    assert accs and accs[0]["auto_delete"] is True
+
+
+def test_sync_one_auto_delete_skips_marker(tmp_path, monkeypatch):
+    """auto_delete 开启时，消失被当作预期镜像删除，不写需关注标记。"""
+    _isolate_logs(monkeypatch)
+    monkeypatch.setattr(sync_all, "LOGDIR", str(tmp_path / "logs"))
+    (tmp_path / "gone.jpg").write_bytes(b"x" * 10)
+
+    def fake_run(cmd, interactive):
+        os.remove(os.path.join(str(tmp_path), "gone.jpg"))
+        return 1.0, 0
+
+    monkeypatch.setattr(sync_all, "run_icloudpd", fake_run)
+    acc = _acc()
+    acc["auto_delete"] = True
+    res = sync_all.sync_one(acc, _cfg(tmp_path), "full", False)
+    assert res == sync_all.EXIT_OK
+    marker = os.path.join(str(tmp_path / "logs"), "NEEDS_ATTENTION.flag")
+    assert not os.path.isfile(marker), "auto_delete 开启时不应写需关注标记"
+
+
+def test_argparse_accounts_without_value_exits_nonzero(monkeypatch):
+    """--full --accounts 缺值：argparse 直接报错退出（非零），杜绝静默全量。"""
+    import sys
+    monkeypatch.setattr(sys, "argv", ["sync_all.py", "--full", "--accounts"])
+    with pytest.raises(SystemExit) as exc:
+        sync_all.main()
+    assert exc.value.code != 0

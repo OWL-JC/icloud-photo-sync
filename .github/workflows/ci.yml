@@ -36,6 +36,12 @@ jobs:
       - name: Compile check
         run: python -m py_compile sync_all.py
 
+      - name: Lint (ruff, error level)
+        # 任何被选中的规则被违反都直接非零退出，CI 变红，杜绝“静默绿”。
+        run: |
+          python -m pip install ruff
+          ruff check .
+
       - name: Install test deps
         run: python -m pip install -r requirements-dev.txt
 

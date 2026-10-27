@@ -13,6 +13,10 @@ cookie_dir = ~/.icloud_session
 tool = icloudpd
 # iCloud 区域：中国大陆填 cn；其他地区留空
 domain = cn
+# 是否启用“手机删、电脑跟着删”（镜像删除，破坏性，默认关闭）。
+# 开启后：iCloud 上已删除的照片，本机也会同步删除；这些删除属于预期镜像行为，
+# 不再写“需关注”标记、也不询问。需要 icloudpd >= 1.12.0 才支持。
+auto_delete = false
 
 # 账号小节示例（复制并改成你自己的）：
 # [account_example]

@@ -32,7 +32,7 @@ does not. This tool simply wraps `icloudpd`.
 
 ## Requirements
 
-- Python 3.7+
+- Python 3.9+
 - [`icloudpd`](https://github.com/boredazfcuk/icloud_photos_downloader) installed
   and available on `PATH` (or set its full path in `config.ini`).
 - An Apple ID with iCloud Photos enabled, and the ability to complete 2FA
@@ -87,7 +87,7 @@ Exit codes (for schedulers and CI):
 | Code | Meaning |
 |------|---------|
 | `0`  | Success — new photos downloaded, or already up to date |
-| `1`  | Sync failed — no accounts, unknown account name, `icloudpd` missing/timeout/error, or file count decreased |
+| `1`  | Sync failed — no accounts, unknown account name, `icloudpd` missing/timeout/error, or directory statistics failing (folder missing / no permission) |
 | `2`  | Usage error — e.g. `--accounts` with no value |
 > Nothing is ever deleted from disk by this tool; a non-zero exit means the sync
 did not complete, not that photos were removed.
@@ -100,25 +100,45 @@ did not complete, not that photos were removed.
 | `cookie_dir`  | Where `icloudpd` stores login session cookies. Do not edit manually — keep it on a local, non-cloud-synced path. |
 | `tool`        | Path to `icloudpd` (or just `icloudpd` if on `PATH`). |
 | `domain`      | iCloud region. **Mainland China → `cn`**; elsewhere leave empty. |
+| `auto_delete` | Mirror deletions — if `true`, photos deleted in iCloud are also deleted locally (destructive, handled by `icloudpd --auto-delete`; needs `icloudpd>=1.12.0`). Default `false`. |
 | `[account_x]` | One section per account: `apple_id` and `folder` (subfolder name; empty = backup root). |
 
 ## Scheduling
 
-- **Windows**: use menu option `6` to create a daily Task Scheduler entry at a
-  time you choose (or option `4` to schedule a one-time full download).
-- **Linux / macOS**: use `cron`. Example — incremental sync every day at 09:30:
-  ```cron
-  30 9 * * * /usr/bin/python3 /path/to/icloud-photo-sync/sync_all.py --sync
-  ```
+This is fully **local** — it does **not** require GitHub Actions or a self-hosted
+runner. The `scheduled-sync.yml` workflow in this repo is only an *example* for
+people who run their own runner; the recommended way to schedule syncs is below.
+
+**Windows (recommended — non-interactive):**
+
+```bash
+python install_scheduler.py --daily 21:00
+# or a one-time full download at a chosen time:
+python install_scheduler.py --once 23:30 --accounts you@example.com
+# inspect / remove what it created:
+python install_scheduler.py --show
+python install_scheduler.py --remove
+```
+
+This creates a Windows Task Scheduler entry that runs `python sync_all.py --sync`
+daily (or `python sync_all.py --full --accounts ...` once). No GitHub involved.
+
+**Windows (interactive menu):** use menu option `6` to create a daily task at a
+time you choose (or option `4` to schedule a one-time full download).
+
+**Linux / macOS:** use `cron`. Example — incremental sync every day at 09:30:
+```cron
+30 9 * * * /usr/bin/python3 /path/to/icloud-photo-sync/sync_all.py --sync
+```
 
 ## Continuous Integration / GitHub Actions
 
 Two example workflows ship in `.github/workflows/`:
 
-- `ci.yml` — on every push / pull request: compile check plus smoke tests,
-  including assertions that failure cases exit non-zero (no accounts, unknown
-  account, missing `icloudpd`, usage error), across a Python 3.8 / 3.10 / 3.12
-  × Ubuntu / Windows matrix.
+- `ci.yml` — on every push / pull request: compile check, a `ruff` lint gate
+  (any violation fails the build), plus smoke tests including assertions that
+  failure cases exit non-zero (no accounts, unknown account, missing `icloudpd`,
+  usage error),   across a Python 3.9 / 3.10 / 3.12 × Ubuntu / Windows matrix.
 - `scheduled-sync.yml` — an example daily sync for a **self-hosted runner**
   (manual-only by default). GitHub-hosted runners cannot reach your photos or
   credentials, so enable it only on a runner you control; see the comments in
@@ -147,8 +167,11 @@ Two example workflows ship in `.github/workflows/`:
   files", re-run menu option `1` to log in again.
 - **`--folder-structure` must be a single brace block**: `"{:%Y/%m}"`, not
   `"{:%Y}/{:%m}"`.
-- **`--auto-delete` (mirror phone deletions to disk) is NOT implemented yet** —
-  planned for a later version. Photos already on disk are never deleted by this tool.
+- **`--auto-delete` (mirror phone deletions to disk) is opt-in** — set
+  `auto_delete = true` in `[settings]`. When enabled, photos deleted in iCloud are
+  also deleted locally (destructive, passed through to `icloudpd --auto-delete`;
+  needs `icloudpd>=1.12.0`). When disabled (default), this tool **never deletes any
+  photos** — file disappearances are only flagged via `logs/NEEDS_ATTENTION.flag`.
 - Login takes 1–3 minutes with no output; that is normal, do not close the window.
 
 ## License
