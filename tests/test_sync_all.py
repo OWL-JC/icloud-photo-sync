@@ -230,8 +230,8 @@ def test_sync_one_ok_when_already_up_to_date(tmp_path, monkeypatch):
     assert sync_all.sync_one(_acc(), _cfg(tmp_path), "full", False) == sync_all.EXIT_OK
 
 
-def test_sync_one_fail_when_files_vanish_during_run(tmp_path, monkeypatch):
-    """运行期间文件数减少 -> 必须判失败。"""
+def test_sync_one_warns_when_files_vanish_during_run(tmp_path, monkeypatch):
+    """运行期间文件数减少 -> 不再自动判失败，仅警告（自动模式下）。"""
     _isolate_logs(monkeypatch)
     (tmp_path / "gone.jpg").write_bytes(b"x" * 10)
 
@@ -240,14 +240,16 @@ def test_sync_one_fail_when_files_vanish_during_run(tmp_path, monkeypatch):
         return 1.0, 0
 
     monkeypatch.setattr(sync_all, "run_icloudpd", fake_run)
-    assert sync_all.sync_one(_acc(), _cfg(tmp_path), "full", False) == sync_all.EXIT_FAIL
+    # 文件消失不再导致 EXIT_FAIL；自动模式仅记录警告，返回 EXIT_OK
+    assert sync_all.sync_one(_acc(), _cfg(tmp_path), "full", False) == sync_all.EXIT_OK
 
 
 def test_sync_one_detects_removal_even_when_total_unchanged(tmp_path, monkeypatch):
-    """集合差集的核心价值：文件总数不变时，仍能发现"有文件消失"。
+    """集合差集的核心价值：文件总数不变时，仍能发现"有文件消失"并报告。
 
     旧逻辑只比较文件总数：少了 1 个又多了 1 个，delta==0 会被判成功（假成功）。
-    新逻辑用集合差集，同时得到"新增"与"消失"两个集合，此处应判失败。
+    新逻辑用集合差集，同时得到"新增"与"消失"两个集合，能发现消失；
+    但"消失"不再自动判失败，而是警告 + 由用户决定是否重新下载，故返回 EXIT_OK。
     """
     _isolate_logs(monkeypatch)
     (tmp_path / "old.jpg").write_bytes(b"x" * 10)
@@ -258,8 +260,46 @@ def test_sync_one_detects_removal_even_when_total_unchanged(tmp_path, monkeypatc
         return 1.0, 0
 
     monkeypatch.setattr(sync_all, "run_icloudpd", fake_run)
-    # 总数前后都是 1，但内容变了：old.jpg 消失、new.jpg 新增 -> 必须失败
-    assert sync_all.sync_one(_acc(), _cfg(tmp_path), "full", False) == sync_all.EXIT_FAIL
+    # 总数前后都是 1，但内容变了：old.jpg 消失、new.jpg 新增 -> 不再判失败
+    assert sync_all.sync_one(_acc(), _cfg(tmp_path), "full", False) == sync_all.EXIT_OK
+
+
+def test_sync_one_re_downloads_when_user_confirms_removal(tmp_path, monkeypatch):
+    """交互模式下，若用户确认重新下载，run_icloudpd 应被再次调用。"""
+    _isolate_logs(monkeypatch)
+    (tmp_path / "a.jpg").write_bytes(b"x" * 10)
+    calls = {"n": 0}
+
+    def fake_run(cmd, interactive):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            os.remove(os.path.join(str(tmp_path), "a.jpg"))  # 模拟运行期间被删
+        return 1.0, 0
+
+    monkeypatch.setattr(sync_all, "run_icloudpd", fake_run)
+    monkeypatch.setattr("builtins.input", lambda *a: "y")  # 用户确认重下
+    res = sync_all.sync_one(_acc(), _cfg(tmp_path), "full", True)
+    assert calls["n"] == 2, "应调用两次：首次 + 用户确认后的重新下载"
+    assert res == sync_all.EXIT_OK
+
+
+def test_sync_one_no_redownload_when_user_declines(tmp_path, monkeypatch):
+    """交互模式下，若用户拒绝重新下载，run_icloudpd 只调用一次。"""
+    _isolate_logs(monkeypatch)
+    (tmp_path / "a.jpg").write_bytes(b"x" * 10)
+    calls = {"n": 0}
+
+    def fake_run(cmd, interactive):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            os.remove(os.path.join(str(tmp_path), "a.jpg"))
+        return 1.0, 0
+
+    monkeypatch.setattr(sync_all, "run_icloudpd", fake_run)
+    monkeypatch.setattr("builtins.input", lambda *a: "n")  # 用户拒绝
+    res = sync_all.sync_one(_acc(), _cfg(tmp_path), "full", True)
+    assert calls["n"] == 1, "用户拒绝后不应再次调用 run_icloudpd"
+    assert res == sync_all.EXIT_OK
 
 
 def test_sync_one_fail_when_icloudpd_broken(tmp_path, monkeypatch):

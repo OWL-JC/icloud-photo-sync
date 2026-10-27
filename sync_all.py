@@ -374,11 +374,32 @@ def sync_one(acc, cfg, mode, interactive):
         log("[%s] 结果：失败（icloudpd 运行异常，请检查 tool 路径、网络与登录凭证）。"
             % acc["apple_id"])
         return EXIT_FAIL
+    # 文件消失不再自动判定失败：备份目录被手动改动 / 清理时，交由用户自己决定。
     if removed:
-        # 同步过程中有文件消失（被手动删除 / 其他程序清理），必须告警而非静默
-        log("[%s] 结果：失败（同步中有 %d 个文件消失，请检查备份目录是否被改动：%s）。"
+        log("[%s] 警告：本次同步中有 %d 个文件消失（可能被手动删除或清理）：%s"
             % (acc["apple_id"], len(removed), "、".join(sorted(removed)[:5])))
-        return EXIT_FAIL
+        if interactive:
+            # 手动运行模式：让用户自己选择是否重新下载以补齐
+            try:
+                ans = input("[%s] 发现 %d 个文件消失，是否重新下载以补齐？[y/N] "
+                            % (acc["apple_id"], len(removed)))
+            except EOFError:
+                ans = ""
+            if ans.strip().lower() in ("y", "yes", "是"):
+                log("[%s] 用户选择重新下载，再次运行同步..." % acc["apple_id"])
+                elapsed, code = run_icloudpd(cmd, interactive)
+                after_paths = list_files(directory)
+                if after_paths is None:
+                    log("[%s] 结果：失败（重新同步后统计目录失败）。" % acc["apple_id"])
+                    return EXIT_FAIL
+                after_n = len(after_paths)
+                after_sz = _size_of(directory, after_paths)
+                added = after_paths - before_paths
+                removed = before_paths - after_paths
+                delta = len(added)
+                log("[%s] 重新同步后：新增%d个 仍消失%d个" %
+                    (acc["apple_id"], delta, len(removed)))
+        # 非交互（自动运行）模式仅保留上述警告，不自动判失败，由用户后续自行决定
     if delta > 0:
         log("[%s] 结果：OK，有新照片。" % acc["apple_id"])
         return EXIT_OK
