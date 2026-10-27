@@ -296,8 +296,13 @@ def test_sync_one_fail_when_after_listing_fails(tmp_path, monkeypatch):
     assert sync_all.sync_one(_acc(), _cfg(tmp_path), "full", False) == sync_all.EXIT_FAIL
 
 
-def test_incremental_mode_adds_until_found_flag(monkeypatch):
-    """增量模式必须带 --until-found，且值来自常量（不能写死）。"""
+def test_incremental_mode_adds_until_found_flag(tmp_path, monkeypatch):
+    """增量模式必须带 --until-found，且值来自常量（不能写死）。
+
+    目录用 pytest 的 tmp_path（可写、干净），不要直接统计系统 /tmp：
+    否则在 Linux 上 /tmp 含不可读的系统子目录，list_files 会抛
+    PermissionError 而提前返回，桩函数不被调用导致断言失败（CI 变红）。
+    """
     seen = {}
 
     def fake_run(cmd, interactive):
@@ -305,7 +310,7 @@ def test_incremental_mode_adds_until_found_flag(monkeypatch):
         return 1.0, 0
 
     monkeypatch.setattr(sync_all, "run_icloudpd", fake_run)
-    sync_all.sync_one(_acc(), _cfg("/tmp"), "incremental", False)
+    sync_all.sync_one(_acc(), _cfg(tmp_path), "incremental", False)
     cmd = seen["cmd"]
     assert "--until-found" in cmd
     assert sync_all.INCREMENTAL_UNTIL in cmd
