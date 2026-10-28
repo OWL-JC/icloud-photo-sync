@@ -61,7 +61,7 @@ def test_parse_index_tolerates_whitespace():
 # ------------------------------------------------------------ valid_apple_id
 def test_valid_apple_id_accepts_normal_emails():
     assert sync_all.valid_apple_id("a@b.com") is True
-    assert sync_all.valid_apple_id("769739689@qq.com") is True
+    assert sync_all.valid_apple_id("someone@qq.com") is True
 
 
 @pytest.mark.parametrize("bad", [
@@ -482,12 +482,13 @@ def test_redact_log_masks_drive_path(tmp_path, monkeypatch):
     monkeypatch.setattr(sync_all, "LOGDIR", str(logs))
     p = os.path.join(str(logs), "sync.log")
     with open(p, "w", encoding="utf-8") as f:
-        f.write("Apple ID a@b.com 备份目录 E:\\backup\\iCloud\\IMG.jpg 用户 C:\\Users\\OWL\\x\n")
+        f.write("Apple ID a@b.com 备份目录 E:\\MyBackup\\IMG.jpg 用户 C:\\Users\\testuser\\x\n")
     sync_all.redact_log()
     txt = open(p, encoding="utf-8").read()
-    assert "***@***" in txt
-    assert "E:\\***" in txt
-    assert "01_照片与媒体" not in txt
+    assert "***@***" in txt          # 邮箱被抹掉
+    assert "E:\\***" in txt          # 盘符绝对路径被抹掉
+    assert "MyBackup" not in txt     # 备份目录名不残留
+    assert "testuser" not in txt     # 系统用户名不残留
 
 
 # ----------------------------------------------- auto_delete / argparse
