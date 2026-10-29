@@ -22,3 +22,28 @@ auto_delete = false
 # [account_example]
 # apple_id = your-apple-id@example.com
 # folder = example          # 子文件夹名；留空则直接放备份根目录
+
+# ---- 失败通知邮件（可选，默认关闭）----
+# 同步失败时（含磁盘空间过低）自动发邮件提醒你。需自行准备 SMTP 账号。
+# QQ 邮箱 SMTP：smtp.qq.com，端口 465（SSL）或 587（STARTTLS）；
+# 密码不是 QQ 登录密码，而是“授权码”（QQ邮箱网页版 -> 设置 -> 账户 -> 开启IMAP/SMTP -> 生成授权码）。
+# [notify]
+# enabled = false
+# smtp_host = smtp.qq.com
+# smtp_port = 465
+# smtp_security = ssl        # ssl 或 starttls
+# smtp_user = your-qq@qq.com
+# smtp_pass = 你的授权码
+# from = your-qq@qq.com
+# to = your-qq@qq.com
+
+# ---- 日志自动轮转（可选）----
+# sync.log 超过 max_size_mb（MB）就备份为 .1/.2/...，最多保留 keep 份。
+# [log]
+# max_size_mb = 5
+# keep = 5
+
+# ---- 磁盘空间预警（可选）----
+# 备份盘剩余低于 warn_free_gb（GB）时，在日志（及通知邮件）里提醒。
+# [disk]
+# warn_free_gb = 5

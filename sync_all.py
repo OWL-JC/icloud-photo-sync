@@ -38,9 +38,12 @@ import hashlib
 import json
 import os
 import re
+import shutil
+import smtplib
 import subprocess
 import sys
 import time
+from email.mime.text import MIMEText
 
 # 非 TTY（管道 / 重定向 / CI）输出时强制使用 utf-8，避免中文日志乱码
 try:
@@ -102,8 +105,14 @@ SEC_PER_MINUTE = 60.0        # 秒 → 分 的换算系数
 RECENT_TRIGGER_COUNT = 1     # 触发登录时顺带下载的最近照片张数
 DISPLAY_FILE_SAMPLE = 5      # 文件消失警告中最多列举的文件数
 
+GB = 1024.0 ** 3
+LOG_MAX_SIZE_MB = 5          # sync.log 超过此大小（MB）则轮转
+LOG_KEEP = 5                 # 轮转最多保留的旧日志份数
+DISK_WARN_FREE_GB = 5.0      # 备份盘剩余低于此值（GB）时预警（日志 + 邮件）
+
 
 def log(msg):
+    _maybe_rotate_log()
     line = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "  " + str(msg)
     try:
         print(line)
@@ -533,14 +542,29 @@ def headless(mode, accounts_arg):
             return EXIT_FAIL
     else:
         sel = accs
+    # 运维预警：同步前先检查备份盘剩余空间，过低提前提示
+    check_disk_space(cfg["settings"])
     log("=" * HEADER_WIDTH)
     log("后台同步开始  模式=%s  账号数=%d" % (mode, len(sel)))
     failed = 0
+    failed_ids = []
     for acc in sel:
         if sync_one(acc, cfg, mode, interactive=False) != EXIT_OK:
             failed += 1
+            failed_ids.append(acc["apple_id"])
+    free_gb, _ = check_disk_space(cfg["settings"])
     log("后台同步结束  成功=%d  失败=%d" % (len(sel) - failed, failed))
     log("=" * HEADER_WIDTH)
+    if failed:
+        detail = "失败账号：%s" % "、".join(failed_ids)
+        if free_gb is not None and free_gb < DISK_WARN_FREE_GB:
+            detail += "；磁盘剩余 %.1f GB（低于阈值 %.0f GB）" % (free_gb, DISK_WARN_FREE_GB)
+        send_notify(
+            "[iCloud照片同步失败] %s" % datetime.datetime.now().strftime("%Y-%m-%d"),
+            "iCloud 照片同步于 %s 失败。\n%s\n\n最近日志：\n%s"
+            % (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+               detail, _log_tail(50)),
+            cfg)
     return EXIT_FAIL if failed else EXIT_OK
 
 
@@ -630,6 +654,122 @@ def redact_log():
         return EXIT_FAIL
     print("已脱敏：" + path)
     return EXIT_OK
+
+
+# ---------------- 通知与运维增强（D：失败提醒 / 日志轮转 / 磁盘预警） ----------------
+def _log_path():
+    return os.path.join(LOGDIR, "sync.log")
+
+
+def _maybe_rotate_log():
+    """当 sync.log 超过阈值时做编号轮转（保留 LOG_KEEP 份旧日志）。
+
+    在 log() 写入前调用；轮转后文件变小，后续写入不会反复触发。
+    """
+    p = _log_path()
+    try:
+        if not os.path.isfile(p):
+            return
+        if os.path.getsize(p) < LOG_MAX_SIZE_MB * MB:
+            return
+    except Exception:
+        return
+    try:
+        for i in range(LOG_KEEP - 1, 0, -1):
+            src = "%s.%d" % (p, i)
+            dst = "%s.%d" % (p, i + 1)
+            if os.path.isfile(src):
+                if os.path.isfile(dst):
+                    os.remove(dst)
+                os.rename(src, dst)
+        if os.path.isfile(p):
+            os.rename(p, p + ".1")
+    except Exception as e:
+        try:
+            sys.stderr.write("[日志轮转失败] %s\n" % e)
+        except Exception:
+            pass
+
+
+def get_notify_cfg(cfg):
+    """读取 [notify] 配置；未配置或禁用时返回 enabled=False。"""
+    n = cfg["notify"] if cfg.has_section("notify") else {}
+    enabled = n.get("enabled", "false").strip().lower() in ("1", "true", "yes", "是")
+    port = n.get("smtp_port", "465").strip()
+    try:
+        port = int(port) if port else 465
+    except ValueError:
+        port = 465
+    return {
+        "enabled": enabled,
+        "host": n.get("smtp_host", "").strip(),
+        "port": port,
+        "security": n.get("smtp_security", "ssl").strip().lower(),
+        "user": n.get("smtp_user", "").strip(),
+        "pass": n.get("smtp_pass", "").strip(),
+        "to": n.get("to", "").strip(),
+        "from": n.get("from", "").strip(),
+    }
+
+
+def _log_tail(n=50):
+    """读取 sync.log 末尾若干行，供失败通知邮件附上上下文。"""
+    try:
+        with open(_log_path(), encoding="utf-8", errors="replace") as f:
+            lines = f.read().splitlines()
+        return "\n".join(lines[-n:])
+    except Exception:
+        return "(无法读取日志)"
+
+
+def send_notify(subject, body, cfg):
+    """同步失败 / 磁盘预警时，按 [notify] 配置发送通知邮件。
+
+    未启用或配置不完整时安静返回，不抛异常、不影响同步主流程。
+    """
+    nc = get_notify_cfg(cfg)
+    if not nc["enabled"]:
+        return False
+    if not (nc["host"] and nc["user"] and nc["pass"] and nc["to"]):
+        log("通知未发送：notify 配置不完整（需 smtp_host/smtp_user/smtp_pass/to）。")
+        return False
+    try:
+        msg = MIMEText(body, "plain", "utf-8")
+        msg["Subject"] = subject
+        msg["From"] = nc["from"] or nc["user"]
+        msg["To"] = nc["to"]
+        if nc["security"] == "starttls":
+            with smtplib.SMTP(nc["host"], nc["port"], timeout=30) as s:
+                s.starttls()
+                s.login(nc["user"], nc["pass"])
+                s.sendmail(nc["from"] or nc["user"], [nc["to"]], msg.as_string())
+        else:
+            with smtplib.SMTP_SSL(nc["host"], nc["port"], timeout=30) as s:
+                s.login(nc["user"], nc["pass"])
+                s.sendmail(nc["from"] or nc["user"], [nc["to"]], msg.as_string())
+        log("已发送通知邮件至：" + nc["to"])
+        return True
+    except Exception as e:
+        log("发送通知邮件失败：" + str(e))
+        return False
+
+
+def check_disk_space(s):
+    """检查备份盘剩余空间，过低则在日志中预警；返回 (free_gb, total_gb)。"""
+    root = s.get("backup_root", "")
+    if not root:
+        return None, None
+    try:
+        total, _used, free = shutil.disk_usage(root)
+    except Exception as e:
+        log("无法获取磁盘空间（%s）：%s" % (root, e))
+        return None, None
+    free_gb = free / GB
+    total_gb = total / GB
+    if free_gb < DISK_WARN_FREE_GB:
+        log("⚠ 磁盘空间预警：备份盘 %s 剩余 %.1f GB（低于阈值 %.0f GB），请尽快清理。"
+            % (root, free_gb, DISK_WARN_FREE_GB))
+    return free_gb, total_gb
 
 
 def show_tasks():

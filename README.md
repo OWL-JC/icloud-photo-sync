@@ -102,6 +102,20 @@ did not complete, not that photos were removed.
 | `domain`      | iCloud region. **Mainland China → `cn`**; elsewhere leave empty. |
 | `auto_delete` | Mirror deletions — if `true`, photos deleted in iCloud are also deleted locally (destructive, handled by `icloudpd --auto-delete`; needs `icloudpd>=1.12.0`). Default `false`. |
 | `[account_x]` | One section per account: `apple_id` and `folder` (subfolder name; empty = backup root). |
+| `[notify]`    | **Optional.** Failure alert email. Set `enabled=true` and fill `smtp_host` / `smtp_user` / `smtp_pass` / `to` (see example in `config.ini.example`). Sent when a sync fails (or disk space is low). Default off. |
+| `[log]`       | **Optional.** `max_size_mb` + `keep`: rotate `sync.log` once it exceeds the size, keeping up to `keep` old copies. |
+| `[disk]`      | **Optional.** `warn_free_gb`: warn (log + email) when the backup drive has less than this many GB free. |
+
+### Optional enhancements
+
+- **Failure email alert** — add a `[notify]` section and set `enabled=true`. On any
+  sync failure (and on low disk space) the tool sends an email via SMTP, so you know
+  even when running unattended. Uses SSL (port 465) or STARTTLS (port 587).
+- **Log rotation** — add a `[log]` section. `sync.log` is rotated once it passes
+  `max_size_mb`, keeping up to `keep` historical copies (`.1`, `.2`, …).
+- **Disk space warning** — add a `[disk]` section with `warn_free_gb`. When free space
+  on the backup drive drops below that threshold, a warning is logged (and emailed if
+  `[notify]` is enabled).
 
 ## Scheduling
 

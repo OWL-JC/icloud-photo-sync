@@ -90,6 +90,15 @@ python sync_all.py --redact-log                          # 分享前把日志里
 | `domain` | iCloud 区域；**中国大陆填 `cn`**，其他地区留空 |
 | `auto_delete` | 镜像删除——设为 `true` 时，iCloud 上已删除的照片本机也会同步删除（破坏性，由 `icloudpd --auto-delete` 实现，需 `icloudpd>=1.12.0`）。默认 `false` |
 | `[account_x]` | 每个账号一小节：`apple_id` 与 `folder`（子文件夹名；留空 = 备份根目录） |
+| `[notify]` | **可选。** 失败邮件提醒。设 `enabled=true` 并填好 `smtp_host` / `smtp_user` / `smtp_pass` / `to`（详见 `config.ini.example`）。同步失败（或磁盘空间过低）时自动发邮件。默认关闭。 |
+| `[log]` | **可选。** `max_size_mb` + `keep`：`sync.log` 超过该大小就轮转，最多保留 `keep` 份旧日志 |
+| `[disk]` | **可选。** `warn_free_gb`：备份盘剩余空间低于该值时预警（日志 + 邮件） |
+
+### 可选增强功能
+
+- **失败邮件提醒** —— 加 `[notify]` 段并设 `enabled=true`。任何一次同步失败（或磁盘空间过低）都会通过 SMTP 发邮件通知你，无人值守时也能第一时间知道。支持 SSL（465）或 STARTTLS（587）。
+- **日志自动轮转** —— 加 `[log]` 段。`sync.log` 超过 `max_size_mb` 就轮转，保留最多 `keep` 份历史（`.1`、`.2`……）。
+- **磁盘空间预警** —— 加 `[disk]` 段设 `warn_free_gb`。备份盘剩余低于该阈值时，日志（以及已开启的提醒邮件）会给出警告。
 
 ## 定时同步
 

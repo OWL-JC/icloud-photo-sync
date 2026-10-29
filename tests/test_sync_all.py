@@ -535,3 +535,128 @@ def test_argparse_accounts_without_value_exits_nonzero(monkeypatch):
     with pytest.raises(SystemExit) as exc:
         sync_all.main()
     assert exc.value.code != 0
+
+
+# ------------------------------------------ D 增强：通知 / 日志轮转 / 磁盘预警
+def test_get_notify_cfg_disabled_by_default():
+    import configparser
+    cfg = configparser.ConfigParser()
+    nc = sync_all.get_notify_cfg(cfg)
+    assert nc["enabled"] is False
+
+
+def test_send_notify_skips_when_disabled(monkeypatch):
+    import configparser
+    cfg = configparser.ConfigParser()   # 无 [notify]，默认禁用
+    def boom(*a, **k):
+        raise AssertionError("禁用时不应调用 SMTP")
+    monkeypatch.setattr(sync_all.smtplib, "SMTP_SSL", boom)
+    monkeypatch.setattr(sync_all.smtplib, "SMTP", boom)
+    monkeypatch.setattr(sync_all, "log", lambda *a, **k: None)
+    assert sync_all.send_notify("主题", "正文", cfg) is False
+
+
+def test_send_notify_skips_when_incomplete(monkeypatch):
+    import configparser
+    cfg = configparser.ConfigParser()
+    cfg.add_section("notify")
+    cfg["notify"]["enabled"] = "true"   # 开启但缺 host/user/pass/to
+    def boom(*a, **k):
+        raise AssertionError("配置不完整不应调用 SMTP")
+    monkeypatch.setattr(sync_all.smtplib, "SMTP_SSL", boom)
+    monkeypatch.setattr(sync_all.smtplib, "SMTP", boom)
+    monkeypatch.setattr(sync_all, "log", lambda *a, **k: None)
+    assert sync_all.send_notify("主题", "正文", cfg) is False
+
+
+def test_send_notify_sends_via_ssl(monkeypatch):
+    import configparser
+    cfg = configparser.ConfigParser()
+    cfg.add_section("notify")
+    cfg["notify"]["enabled"] = "true"
+    cfg["notify"]["smtp_host"] = "smtp.example.com"
+    cfg["notify"]["smtp_port"] = "465"
+    cfg["notify"]["smtp_security"] = "ssl"
+    cfg["notify"]["smtp_user"] = "me@example.com"
+    cfg["notify"]["smtp_pass"] = "app-pass"
+    cfg["notify"]["from"] = "me@example.com"
+    cfg["notify"]["to"] = "you@example.com"
+
+    sent = {}
+
+    class FakeSMTP:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def login(self, *a):
+            return None
+
+        def sendmail(self, frm, to, msg):
+            sent["frm"] = frm
+            sent["to"] = to
+            sent["msg"] = msg
+
+    monkeypatch.setattr(sync_all.smtplib, "SMTP_SSL", FakeSMTP)
+    monkeypatch.setattr(sync_all, "log", lambda *a, **k: None)
+    assert sync_all.send_notify("主题", "正文", cfg) is True
+    assert sent["to"] == ["you@example.com"]
+    assert "To: you@example.com" in sent["msg"]
+
+
+def test_check_disk_space_low_triggers_warning(monkeypatch):
+    captured = []
+    monkeypatch.setattr(sync_all, "log", lambda m: captured.append(m))
+    monkeypatch.setattr(
+        sync_all.shutil, "disk_usage",
+        lambda p: (100 * sync_all.GB, 99 * sync_all.GB, 1 * sync_all.GB))  # 仅剩 1GB
+    free_gb, total_gb = sync_all.check_disk_space({"backup_root": "C:\\x"})
+    assert free_gb == 1.0
+    assert any("磁盘空间预警" in m for m in captured)
+
+
+def test_log_rotation_renames_when_exceeds_threshold(monkeypatch):
+    import tempfile
+    d = tempfile.mkdtemp()
+    monkeypatch.setattr(sync_all, "LOGDIR", d)
+    monkeypatch.setattr(sync_all, "LOG_MAX_SIZE_MB", 0.000001)  # 任意内容都触发
+    p = os.path.join(d, "sync.log")
+    with open(p, "w", encoding="utf-8") as f:
+        f.write("hello\n")
+    sync_all._maybe_rotate_log()
+    assert os.path.isfile(p + ".1"), "超过阈值后应轮转为 sync.log.1"
+    assert not os.path.isfile(p), "原 sync.log 应被移走"
+
+
+def test_headless_notifies_on_failure(monkeypatch):
+    """headless 在某账号失败时，应触发通知邮件并仍以退出码 1 收尾。"""
+    import configparser
+    cfg = configparser.ConfigParser()
+    cfg.add_section("settings")
+    cfg["settings"]["backup_root"] = "C:\\x"
+    cfg.add_section("account_a")
+    cfg["account_a"]["apple_id"] = "a@b.com"
+    monkeypatch.setattr(sync_all, "load_config", lambda: cfg)
+    monkeypatch.setattr(
+        sync_all, "get_accounts",
+        lambda c: [{"id": "account_a", "apple_id": "a@b.com",
+                    "folder": "", "auto_delete": False}])
+    monkeypatch.setattr(sync_all, "sync_one", lambda *a, **k: sync_all.EXIT_FAIL)
+    monkeypatch.setattr(sync_all, "check_disk_space", lambda *a, **k: (99.0, 100.0))
+    monkeypatch.setattr(sync_all, "log", lambda *a, **k: None)
+    sent = {}
+
+    def fake_send(subject, body, c):
+        sent["subject"] = subject
+        return True
+
+    monkeypatch.setattr(sync_all, "send_notify", fake_send)
+    rc = sync_all.headless("incremental", None)
+    assert rc == sync_all.EXIT_FAIL
+    assert "subject" in sent, "失败时应当触发通知"
+    assert "失败" in sent["subject"]
